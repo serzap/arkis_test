@@ -9,7 +9,10 @@ import (
 
 type Queue interface {
 	Consume(ctx context.Context) (<-chan queue.Delivery, error)
-	Publish(ctx context.Context, msg []byte) error
+}
+
+type Exchange interface {
+	Publish(ctx context.Context, routingKey string, msg []byte) error
 }
 
 type Database interface {
@@ -17,24 +20,18 @@ type Database interface {
 }
 
 type processor struct {
-	inputA   Queue
-	outputA  Queue
-	inputB   Queue
-	outputB  Queue
-	database Database
+	input      Queue
+	exchange   Exchange
+	routingKey string
+	database   Database
 }
 
-func New(inputA, outputA, inputB, outputB Queue, db Database) processor {
-	return processor{inputA, outputA, inputB, outputB, db}
+func New(input Queue, exchange Exchange, routingKey string, db Database) processor {
+	return processor{input: input, exchange: exchange, routingKey: routingKey, database: db}
 }
 
 func (p processor) Run(ctx context.Context) error {
-	deliveriesA, err := p.inputA.Consume(ctx)
-	if err != nil {
-		return err
-	}
-
-	deliveriesB, err := p.inputB.Consume(ctx)
+	deliveries, err := p.input.Consume(ctx)
 	if err != nil {
 		return err
 	}
@@ -43,19 +40,15 @@ func (p processor) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case delivery := <-deliveriesA:
-			if err := p.process(ctx, delivery, p.outputA); err != nil {
-				return err
-			}
-		case delivery := <-deliveriesB:
-			if err := p.process(ctx, delivery, p.outputB); err != nil {
+		case delivery := <-deliveries:
+			if err := p.process(ctx, delivery); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func (p processor) process(ctx context.Context, delivery queue.Delivery, output Queue) error {
+func (p processor) process(ctx context.Context, delivery queue.Delivery) error {
 	log.WithField("delivery", string(delivery.Body)).Info("Processing the delivery")
 
 	data, err := p.database.Get(delivery.Body)
@@ -65,5 +58,5 @@ func (p processor) process(ctx context.Context, delivery queue.Delivery, output 
 
 	log.WithField("result", string(data)).Info("Processed the delivery")
 
-	return output.Publish(ctx, []byte(data))
+	return p.exchange.Publish(ctx, p.routingKey, []byte(data))
 }

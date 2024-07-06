@@ -7,60 +7,81 @@ import (
 	"arkis_test/queue"
 	"context"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 
 	log "github.com/sirupsen/logrus"
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	inputQueueA, err := queue.New(os.Getenv("RABBITMQ_URL"), "input-A")
+	rabbitURL := os.Getenv("RABBITMQ_URL")
+	if rabbitURL == "" {
+		log.Fatal("RABBITMQ_URL environment variable is not set")
+	}
+
+	queueNames := os.Getenv("QUEUE_NAMES")
+	if queueNames == "" {
+		log.Fatal("QUEUE_NAMES environment variable is not set")
+	}
+
+	db := database.D{}
+	HandleSignals(cancel)
+
+	_, err := exchange.New(rabbitURL, "exchange-input", "direct")
 	if err != nil {
-		log.WithError(err).Panic("Cannot create input queue A")
+		log.WithError(err).Error("Failed to create input exchange")
 	}
 
-	outputQueueA, err := queue.New(os.Getenv("RABBITMQ_URL"), "output-A")
+	exchange, err := exchange.New(rabbitURL, "exchange-output", "direct")
 	if err != nil {
-		log.WithError(err).Panic("Cannot create output queue A")
+		log.WithError(err).Error("Failed to create output exchange")
 	}
 
-	inputQueueB, err := queue.New(os.Getenv("RABBITMQ_URL"), "input-B")
-	if err != nil {
-		log.WithError(err).Panic("Cannot create input queue B")
-	}
+	queuePairs := strings.Split(queueNames, ",")
 
-	outputQueueB, err := queue.New(os.Getenv("RABBITMQ_URL"), "output-B")
-	if err != nil {
-		log.WithError(err).Panic("Cannot create output queue B")
-	}
+	for _, pair := range queuePairs {
+		names := strings.Split(pair, ":")
+		inputQueueName := names[0]
+		outputQueueName := names[1]
 
-	_, err = exchange.New(os.Getenv("RABBITMQ_URL"), "exchange-input", "direct")
-	if err != nil {
-		log.WithError(err).Panic("Cannot create input exchange")
-	}
+		inputQueue, err := queue.New(rabbitURL, inputQueueName)
+		if err != nil {
+			log.WithError(err).WithField("queue", inputQueueName).Error("Failed to create input queue")
+		}
 
-	_, err = exchange.New(os.Getenv("RABBITMQ_URL"), "exchange-output", "direct")
-	if err != nil {
-		log.WithError(err).Panic("Cannot create output exchange")
-	}
+		outputQueue, err := queue.New(rabbitURL, outputQueueName)
+		if err != nil {
+			log.WithError(err).WithField("queue", outputQueueName).Error("Failed to create output queue")
+		}
 
-	if err := inputQueueA.BindToExchange("exchange-input", "input-A"); err != nil {
-		log.WithError(err).Panic("Cannot bind input queue A to exchange A")
-	}
+		if err := inputQueue.BindToExchange("exchange-input", inputQueueName); err != nil {
+			log.WithError(err).WithField("queue", inputQueueName).Error("Failed to bind input queue to exchange")
+		}
 
-	if err := outputQueueA.BindToExchange("exchange-output", "output-A"); err != nil {
-		log.WithError(err).Panic("Cannot bind output queue A to exchange A")
-	}
+		if err := outputQueue.BindToExchange("exchange-output", outputQueueName); err != nil {
+			log.WithError(err).WithField("queue", outputQueueName).Error("Failed to bind output queue to exchange")
+		}
 
-	if err := inputQueueB.BindToExchange("exchange-input", "input-B"); err != nil {
-		log.WithError(err).Panic("Cannot bind input queue B to exchange B")
-	}
-
-	if err := outputQueueB.BindToExchange("exchange-output", "output-B"); err != nil {
-		log.WithError(err).Panic("Cannot bind output queue B to exchange B")
+		pr := processor.New(inputQueue, exchange, outputQueueName, db)
+		go pr.Run(ctx)
 	}
 
 	log.Info("Application is ready to run")
+	<-ctx.Done()
+	log.Info("Application has shut down gracefully")
+}
 
-	processor.New(inputQueueA, outputQueueA, inputQueueB, outputQueueB, database.D{}).Run(ctx)
+func HandleSignals(cancel context.CancelFunc) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigChan
+		log.WithField("signal", sig).Info("Received signal, shutting down gracefully...")
+		cancel()
+	}()
 }

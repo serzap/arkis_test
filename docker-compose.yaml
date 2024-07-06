@@ -18,6 +18,7 @@ services:
       dockerfile: Dockerfile
     environment:
       RABBITMQ_URL: amqp://rabbitmq:5672
+      QUEUE_NAMES: input-A:output-A,input-B:output-B
     networks:
       - rabbit_net
     depends_on:
