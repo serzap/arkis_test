@@ -28,15 +28,25 @@ func main() {
 		log.Fatal("QUEUE_NAMES environment variable is not set")
 	}
 
+	exchangeInputName := os.Getenv("EXCHANGE_INPUT_NAME")
+	if exchangeInputName == "" {
+		log.Fatal("EXCHANGE_INPUT_NAME environment variable is not set")
+	}
+
+	exchangeOutputName := os.Getenv("EXCHANGE_OUTPUT_NAME")
+	if exchangeOutputName == "" {
+		log.Fatal("EXCHANGE_OUTPUT_NAME environment variable is not set")
+	}
+
 	db := database.D{}
 	HandleSignals(cancel)
 
-	_, err := exchange.New(rabbitURL, "exchange-input", "direct")
+	_, err := exchange.New(rabbitURL, exchangeInputName, "direct")
 	if err != nil {
 		log.WithError(err).Error("Failed to create input exchange")
 	}
 
-	exchange, err := exchange.New(rabbitURL, "exchange-output", "direct")
+	exchange, err := exchange.New(rabbitURL, exchangeOutputName, "direct")
 	if err != nil {
 		log.WithError(err).Error("Failed to create output exchange")
 	}
@@ -58,11 +68,11 @@ func main() {
 			log.WithError(err).WithField("queue", outputQueueName).Error("Failed to create output queue")
 		}
 
-		if err := inputQueue.BindToExchange("exchange-input", inputQueueName); err != nil {
+		if err := inputQueue.BindToExchange(exchangeInputName, inputQueueName); err != nil {
 			log.WithError(err).WithField("queue", inputQueueName).Error("Failed to bind input queue to exchange")
 		}
 
-		if err := outputQueue.BindToExchange("exchange-output", outputQueueName); err != nil {
+		if err := outputQueue.BindToExchange(exchangeOutputName, outputQueueName); err != nil {
 			log.WithError(err).WithField("queue", outputQueueName).Error("Failed to bind output queue to exchange")
 		}
 
