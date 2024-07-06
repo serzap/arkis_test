@@ -17,17 +17,24 @@ type Database interface {
 }
 
 type processor struct {
-	input    Queue
-	output   Queue
+	inputA   Queue
+	outputA  Queue
+	inputB   Queue
+	outputB  Queue
 	database Database
 }
 
-func New(input, output Queue, db Database) processor {
-	return processor{input, output, db}
+func New(inputA, outputA, inputB, outputB Queue, db Database) processor {
+	return processor{inputA, outputA, inputB, outputB, db}
 }
 
 func (p processor) Run(ctx context.Context) error {
-	deliveries, err := p.input.Consume(ctx)
+	deliveriesA, err := p.inputA.Consume(ctx)
+	if err != nil {
+		return err
+	}
+
+	deliveriesB, err := p.inputB.Consume(ctx)
 	if err != nil {
 		return err
 	}
@@ -36,15 +43,19 @@ func (p processor) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case delivery := <-deliveries:
-			if err := p.process(ctx, delivery); err != nil {
+		case delivery := <-deliveriesA:
+			if err := p.process(ctx, delivery, p.outputA); err != nil {
+				return err
+			}
+		case delivery := <-deliveriesB:
+			if err := p.process(ctx, delivery, p.outputB); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func (p processor) process(ctx context.Context, delivery queue.Delivery) error {
+func (p processor) process(ctx context.Context, delivery queue.Delivery, output Queue) error {
 	log.WithField("delivery", string(delivery.Body)).Info("Processing the delivery")
 
 	data, err := p.database.Get(delivery.Body)
@@ -54,5 +65,5 @@ func (p processor) process(ctx context.Context, delivery queue.Delivery) error {
 
 	log.WithField("result", string(data)).Info("Processed the delivery")
 
-	return p.output.Publish(ctx, []byte(data))
+	return output.Publish(ctx, []byte(data))
 }

@@ -86,3 +86,13 @@ func (queue *queue) Publish(ctx context.Context, msg []byte) error {
 
 	return queue.channel.PublishWithContext(ctx, "", queue.name, true, false, data)
 }
+
+func (queue *queue) BindToExchange(exchangeName, routingKey string) error {
+	return queue.channel.QueueBind(
+		queue.name,   // queue name
+		routingKey,   // routing key
+		exchangeName, // exchange
+		false,        // no-wait
+		nil,          // arguments
+	)
+}
